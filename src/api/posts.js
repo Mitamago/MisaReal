@@ -3,6 +3,8 @@ let posts = [];
 const MAX_POSTS = 1000;
 
 export default function handler(req, res) {
+  console.log('API called:', req.method, req.url);
+  
   // CORS設定
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -13,51 +15,63 @@ export default function handler(req, res) {
     return;
   }
 
-  if (req.method === 'GET') {
-    // 最新の1000件の投稿を取得
-    const recentPosts = posts.slice(0, MAX_POSTS);
-    res.status(200).json({ posts: recentPosts });
-    return;
-  }
-
-  if (req.method === 'POST') {
-    const { author, content } = req.body;
-
-    if (!author || !content) {
-      res.status(400).json({ error: 'Author and content are required' });
+  try {
+    if (req.method === 'GET') {
+      console.log('Getting posts, count:', posts.length);
+      // 最新の1000件の投稿を取得
+      const recentPosts = posts.slice(0, MAX_POSTS);
+      res.status(200).json({ posts: recentPosts });
       return;
     }
 
-    if (content.length > 50) {
-      res.status(400).json({ error: 'Content must be 50 characters or less' });
+    if (req.method === 'POST') {
+      console.log('POST request body:', req.body);
+      
+      const { author, content } = req.body;
+
+      if (!author || !content) {
+        console.log('Missing author or content');
+        res.status(400).json({ error: 'Author and content are required' });
+        return;
+      }
+
+      if (content.length > 50) {
+        console.log('Content too long:', content.length);
+        res.status(400).json({ error: 'Content must be 50 characters or less' });
+        return;
+      }
+
+      const now = new Date();
+      const newPost = {
+        id: Date.now(),
+        author: author.trim(),
+        content: content.trim(),
+        date: now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' }),
+        time: now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }),
+        timestamp: now.getTime()
+      };
+
+      // 投稿を先頭に追加
+      posts.unshift(newPost);
+
+      // 最大件数を超えた場合は古い投稿を削除
+      if (posts.length > MAX_POSTS) {
+        posts = posts.slice(0, MAX_POSTS);
+      }
+
+      console.log('Post created successfully:', newPost);
+      res.status(201).json({ 
+        success: true, 
+        post: newPost,
+        totalPosts: posts.length 
+      });
       return;
     }
 
-    const now = new Date();
-    const newPost = {
-      id: Date.now(),
-      author: author.trim(),
-      content: content.trim(),
-      date: now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' }),
-      time: now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }),
-      timestamp: now.getTime()
-    };
-
-    // 投稿を先頭に追加
-    posts.unshift(newPost);
-
-    // 最大件数を超えた場合は古い投稿を削除
-    if (posts.length > MAX_POSTS) {
-      posts = posts.slice(0, MAX_POSTS);
-    }
-
-    res.status(201).json({ 
-      success: true, 
-      post: newPost,
-      totalPosts: posts.length 
-    });
-    return;
+    console.log('Method not allowed:', req.method);
+    res.status(405).json({ error: 'Method not allowed' });
+  } catch (error) {
+    console.error('API Error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-
-  res.status(405).json({ error: 'Method not allowed' });
 }
