@@ -1,0 +1,23 @@
+{
+  "name": "ima-nani-shiteru",
+  "version": "1.0.0",
+  "description": "いまなにしてる？タイムラインアプリ",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'No build step required'",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "cookie-parser": "^1.4.6"
+  },
+  "devDependencies": {
+    "vercel": "^32.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

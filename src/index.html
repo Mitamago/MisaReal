@@ -127,11 +127,33 @@
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
 
+        .timeline-header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+
         .timeline-header h2 {
             font-size: 24px;
-            margin-bottom: 16px;
             font-weight: 800;
             letter-spacing: -0.5px;
+        }
+
+        .logout-btn {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .logout-btn:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         .post-box {
@@ -246,12 +268,45 @@
             margin-bottom: 16px;
         }
 
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+        }
+
+        .error {
+            background: #ff6b6b;
+            color: white;
+            padding: 12px 20px;
+            margin: 20px;
+            border-radius: 12px;
+            text-align: center;
+        }
+
         .hidden {
             display: none;
+        }
+
+        .status-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #4CAF50;
+            z-index: 1000;
+            transition: background-color 0.3s;
+        }
+
+        .status-indicator.disconnected {
+            background: #ff6b6b;
         }
     </style>
 </head>
 <body>
+    <div class="status-indicator" id="statusIndicator"></div>
+    
     <div class="container">
         <!-- ログイン画面 -->
         <div class="login-screen" id="loginScreen">
@@ -267,7 +322,10 @@
         <!-- タイムライン画面 -->
         <div class="timeline-screen" id="timelineScreen">
             <div class="timeline-header">
-                <h2>いまなにしてる？</h2>
+                <div class="timeline-header-top">
+                    <h2>いまなにしてる？</h2>
+                    <button class="logout-btn" onclick="logout()">ログアウト</button>
+                </div>
                 <div class="post-box">
                     <textarea 
                         class="post-input" 
@@ -280,10 +338,7 @@
                 </div>
             </div>
             <div class="timeline-content" id="timelineContent">
-                <div class="empty-state">
-                    <div class="empty-state-icon">💭</div>
-                    <p>まだ投稿がありません<br>最初の投稿をしてみよう！</p>
-                </div>
+                <div class="loading">読み込み中...</div>
             </div>
         </div>
     </div>
@@ -291,6 +346,53 @@
     <script>
         let currentUser = '';
         let posts = [];
+        let pollingInterval = null;
+        let lastUpdateTime = 0;
+
+        // クッキー操作関数
+        function setCookie(name, value, days) {
+            const expires = new Date();
+            expires.setTime(expires.getTime() + (days * 24 * 60 * 60 * 1000));
+            document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/`;
+        }
+
+        function getCookie(name) {
+            const nameEQ = name + "=";
+            const ca = document.cookie.split(';');
+            for (let i = 0; i < ca.length; i++) {
+                let c = ca[i];
+                while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+                if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+            }
+            return null;
+        }
+
+        function deleteCookie(name) {
+            document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+        }
+
+        // ページ読み込み時の初期化
+        function init() {
+            const savedUser = getCookie('userName');
+            if (savedUser) {
+                currentUser = savedUser;
+                showTimeline();
+                loadPosts();
+                startPolling();
+            } else {
+                showLogin();
+            }
+        }
+
+        function showLogin() {
+            document.getElementById('loginScreen').classList.remove('hidden');
+            document.getElementById('timelineScreen').style.display = 'none';
+        }
+
+        function showTimeline() {
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('timelineScreen').style.display = 'block';
+        }
 
         function login() {
             const nameInput = document.getElementById('nameInput');
@@ -302,54 +404,133 @@
             }
             
             currentUser = name;
-            document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('timelineScreen').style.display = 'block';
+            setCookie('userName', name, 30); // 30日間保存
+            
+            showTimeline();
+            loadPosts();
+            startPolling();
             
             document.getElementById('postInput').focus();
         }
 
-        document.getElementById('postInput').addEventListener('input', function(e) {
-            const length = e.target.value.length;
-            const charCount = document.getElementById('charCount');
-            charCount.textContent = `${length} / 50`;
-            
-            if (length >= 45) {
-                charCount.classList.add('warning');
-            } else {
-                charCount.classList.remove('warning');
-            }
-        });
+        function logout() {
+            currentUser = '';
+            deleteCookie('userName');
+            stopPolling();
+            showLogin();
+            document.getElementById('nameInput').value = '';
+        }
 
-        document.getElementById('postInput').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                postMessage();
+        // API呼び出し関数
+        async function loadPosts() {
+            try {
+                const response = await fetch('/api/posts');
+                if (!response.ok) throw new Error('Failed to load posts');
+                
+                const data = await response.json();
+                posts = data.posts || [];
+                lastUpdateTime = Date.now();
+                renderTimeline();
+                updateStatusIndicator(true);
+            } catch (error) {
+                console.error('Error loading posts:', error);
+                showError('投稿の読み込みに失敗しました');
+                updateStatusIndicator(false);
             }
-        });
+        }
 
-        function postMessage() {
+        async function postMessage() {
             const postInput = document.getElementById('postInput');
             const content = postInput.value.trim();
             
-            if (content === '') {
+            if (content === '' || !currentUser) {
                 return;
             }
             
-            const now = new Date();
-            const post = {
-                id: Date.now(),
-                author: currentUser,
-                content: content,
-                date: now.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' }),
-                time: now.toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })
-            };
+            try {
+                const response = await fetch('/api/posts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        author: currentUser,
+                        content: content
+                    })
+                });
+
+                if (!response.ok) throw new Error('Failed to post message');
+                
+                const data = await response.json();
+                
+                // 投稿を先頭に追加
+                posts.unshift(data.post);
+                
+                // 最大1000件に制限
+                if (posts.length > 1000) {
+                    posts = posts.slice(0, 1000);
+                }
+                
+                postInput.value = '';
+                document.getElementById('charCount').textContent = '0 / 50';
+                document.getElementById('charCount').classList.remove('warning');
+                
+                renderTimeline();
+                updateStatusIndicator(true);
+            } catch (error) {
+                console.error('Error posting message:', error);
+                showError('投稿に失敗しました');
+                updateStatusIndicator(false);
+            }
+        }
+
+        // ポーリング機能
+        function startPolling() {
+            if (pollingInterval) return;
             
-            posts.unshift(post);
-            postInput.value = '';
-            document.getElementById('charCount').textContent = '0 / 50';
-            document.getElementById('charCount').classList.remove('warning');
-            
-            renderTimeline();
+            pollingInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/posts');
+                    if (!response.ok) throw new Error('Failed to fetch posts');
+                    
+                    const data = await response.json();
+                    const newPosts = data.posts || [];
+                    
+                    // 新しい投稿があるかチェック
+                    if (newPosts.length !== posts.length || 
+                        (newPosts.length > 0 && posts.length > 0 && 
+                         newPosts[0].id !== posts[0].id)) {
+                        posts = newPosts;
+                        renderTimeline();
+                    }
+                    
+                    updateStatusIndicator(true);
+                } catch (error) {
+                    console.error('Polling error:', error);
+                    updateStatusIndicator(false);
+                }
+            }, 3000); // 3秒おき
+        }
+
+        function stopPolling() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+                pollingInterval = null;
+            }
+        }
+
+        function updateStatusIndicator(connected) {
+            const indicator = document.getElementById('statusIndicator');
+            if (connected) {
+                indicator.classList.remove('disconnected');
+            } else {
+                indicator.classList.add('disconnected');
+            }
+        }
+
+        function showError(message) {
+            const timelineContent = document.getElementById('timelineContent');
+            timelineContent.innerHTML = `<div class="error">${message}</div>`;
         }
 
         function renderTimeline() {
@@ -378,6 +559,38 @@
                 </div>
             `).join('');
         }
+
+        // イベントリスナー
+        document.getElementById('postInput').addEventListener('input', function(e) {
+            const length = e.target.value.length;
+            const charCount = document.getElementById('charCount');
+            charCount.textContent = `${length} / 50`;
+            
+            if (length >= 45) {
+                charCount.classList.add('warning');
+            } else {
+                charCount.classList.remove('warning');
+            }
+        });
+
+        document.getElementById('postInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                postMessage();
+            }
+        });
+
+        // ページ読み込み時に初期化
+        document.addEventListener('DOMContentLoaded', init);
+
+        // ページが非表示になったらポーリングを停止、表示されたら再開
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                stopPolling();
+            } else if (currentUser) {
+                startPolling();
+            }
+        });
     </script>
-<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'994932d3073e067d',t:'MTc2MTQ3Mzc5MC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
